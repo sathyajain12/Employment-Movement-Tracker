@@ -5,6 +5,7 @@ import { rateLimit } from './middleware/rateLimit.js'
 import auth from './routes/auth.js'
 import me from './routes/me.js'
 import movements from './routes/movements.js'
+import reports from './routes/reports.js'
 import { buildServices } from './services/index.js'
 
 const DEV_ORIGIN = 'http://localhost:5173'
@@ -34,6 +35,7 @@ app.use('/api/auth/*', rateLimit({ limit: 60, windowMs: 60_000 }))
 app.route('/api/auth', auth)
 app.route('/api', me)
 app.route('/api/movements', movements)
+app.route('/api', reports)
 
 export default {
   fetch: app.fetch
