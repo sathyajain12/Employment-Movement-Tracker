@@ -4,6 +4,7 @@ import { errorHandler, notFoundHandler } from './middleware/errors.js'
 import { rateLimit } from './middleware/rateLimit.js'
 import auth from './routes/auth.js'
 import me from './routes/me.js'
+import movements from './routes/movements.js'
 import { buildServices } from './services/index.js'
 
 const DEV_ORIGIN = 'http://localhost:5173'
@@ -32,6 +33,7 @@ app.get('/api/health/db', async (c) => {
 app.use('/api/auth/*', rateLimit({ limit: 60, windowMs: 60_000 }))
 app.route('/api/auth', auth)
 app.route('/api', me)
+app.route('/api/movements', movements)
 
 export default {
   fetch: app.fetch
