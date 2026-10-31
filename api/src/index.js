@@ -1,5 +1,7 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
+import { END_OF_DAY_CRON, runEndOfDay } from './jobs/endOfDay.js'
+import { OVERDUE_CRON, runOverdueCheck } from './jobs/overdueCheck.js'
 import { errorHandler, notFoundHandler } from './middleware/errors.js'
 import { rateLimit } from './middleware/rateLimit.js'
 import auth from './routes/auth.js'
@@ -41,6 +43,20 @@ app.route('/api', reports)
 app.route('/api/staff', staff)
 app.route('/api/settings', settings)
 
+const JOBS = {
+  [OVERDUE_CRON]: runOverdueCheck,
+  [END_OF_DAY_CRON]: runEndOfDay
+}
+
 export default {
-  fetch: app.fetch
+  fetch: app.fetch,
+
+  async scheduled(event, env, ctx) {
+    const job = JOBS[event.cron]
+    if (!job) {
+      console.warn(`[cron] no job for schedule "${event.cron}"`)
+      return
+    }
+    ctx.waitUntil(job(env))
+  }
 }

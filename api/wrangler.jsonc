@@ -2,6 +2,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "movement-register-api",
   "main": "src/index.js",
+  // Keep at this value: the local runtime does not support a newer date.
   "compatibility_date": "2026-10-30",
 
   "d1_databases": [
@@ -12,6 +13,22 @@
       "migrations_dir": "migrations"
     }
   ],
+
+  // Cron runs in UTC; the office is IST (UTC+05:30). Keep in sync with src/jobs/*.
+  "triggers": {
+    "crons": [
+      "*/10 3-12 * * 1-6", // overdue check, 08:30–18:20 IST, Mon–Sat
+      "0 12 * * 1-6"       // end-of-day close, 17:30 IST, Mon–Sat
+    ]
+  },
+
+  // Non-secret production values. Local dev overrides these from .dev.vars.
+  // Secrets (JWT_SECRET, GOOGLE_CLIENT_SECRET, ADMIN_EMAILS) are set with `wrangler secret put`.
+  "vars": {
+    "APP_URL": "https://movement-register.example.com",
+    "GOOGLE_CLIENT_ID": "",
+    "ALLOWED_DOMAIN": ""
+  },
 
   "observability": {
     "enabled": true
