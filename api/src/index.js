@@ -6,6 +6,8 @@ import auth from './routes/auth.js'
 import me from './routes/me.js'
 import movements from './routes/movements.js'
 import reports from './routes/reports.js'
+import settings from './routes/settings.js'
+import staff from './routes/staff.js'
 import { buildServices } from './services/index.js'
 
 const DEV_ORIGIN = 'http://localhost:5173'
@@ -36,6 +38,8 @@ app.route('/api/auth', auth)
 app.route('/api', me)
 app.route('/api/movements', movements)
 app.route('/api', reports)
+app.route('/api/staff', staff)
+app.route('/api/settings', settings)
 
 export default {
   fetch: app.fetch

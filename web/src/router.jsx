@@ -5,6 +5,8 @@ import Dashboard from './pages/admin/Dashboard.jsx'
 import Monthly from './pages/admin/Monthly.jsx'
 import Register from './pages/admin/Register.jsx'
 import Review from './pages/admin/Review.jsx'
+import Settings from './pages/admin/Settings.jsx'
+import Staff from './pages/admin/Staff.jsx'
 import Login from './pages/Login.jsx'
 import History from './pages/staff/History.jsx'
 import StaffHome from './pages/staff/Home.jsx'
@@ -28,7 +30,9 @@ export const router = createBrowserRouter([
               { index: true, element: <Dashboard /> },
               { path: 'review', element: <Review /> },
               { path: 'register', element: <Register /> },
-              { path: 'monthly', element: <Monthly /> }
+              { path: 'monthly', element: <Monthly /> },
+              { path: 'staff', element: <Staff /> },
+              { path: 'settings', element: <Settings /> }
             ]
           },
           { path: '*', element: <NotFound /> }
