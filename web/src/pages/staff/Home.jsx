@@ -116,14 +116,18 @@ function OutCard({ movement, limit, onReturned }) {
   return (
     <section className="card" aria-labelledby="out-heading">
       <div className="flex items-start justify-between gap-3">
-        <h1 id="out-heading" className="text-xl font-semibold">You are out</h1>
+        <h1 id="out-heading" className="text-xl font-semibold">{movement.canReturn ? 'You are out' : 'Time In missing'}</h1>
         <span className="text-sm text-slate-500">{formatDate(movement.timeOut)}</span>
       </div>
 
-      <div className="my-6 text-center">
-        <LiveMinutes since={movement.timeOut} limit={limit} size="lg" />
-        <p className="mt-1 text-sm text-slate-500">since {formatTime(movement.timeOut)} · limit {limit} min</p>
-      </div>
+      {movement.canReturn ? (
+        <div className="my-6 text-center">
+          <LiveMinutes since={movement.timeOut} limit={limit} size="lg" />
+          <p className="mt-1 text-sm text-slate-500">since {formatTime(movement.timeOut)} · limit {limit} min</p>
+        </div>
+      ) : (
+        <p className="my-4 text-sm text-slate-600">Time Out was recorded at {formatTime(movement.timeOut)}.</p>
+      )}
 
       <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
         <dt className="text-slate-500">Purpose</dt>

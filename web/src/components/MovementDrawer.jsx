@@ -114,10 +114,11 @@ export function MovementDrawer({ movement, onClose }) {
   const dialogRef = useRef(null)
   const [saved, setSaved] = useState(false)
 
+  // No cleanup: unmounting removes the dialog from the DOM, which closes it. Calling close()
+  // here would fire onClose during StrictMode's dev re-mount and immediately dismiss the drawer.
   useEffect(() => {
     const dialog = dialogRef.current
-    dialog.showModal()
-    return () => dialog.close()
+    if (!dialog.open) dialog.showModal()
   }, [])
 
   return (

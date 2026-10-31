@@ -86,7 +86,8 @@ function RegisterTable({ items, onOpen }) {
     <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
       <table className="table-base">
         <thead>
-          <tr>{REGISTER_HEADINGS.map((h) => <th key={h} scope="col">{h}</th>)}</tr>
+          {/* Long paper headings wrap so all ten columns fit on a laptop screen. */}
+          <tr>{REGISTER_HEADINGS.map((h) => <th key={h} scope="col" className="align-bottom whitespace-normal">{h}</th>)}</tr>
         </thead>
         <tbody>
           {items.map((m) => (
@@ -100,12 +101,12 @@ function RegisterTable({ items, onOpen }) {
               <td className="whitespace-nowrap">{formatDate(m.timeOut)}</td>
               <td className="whitespace-nowrap">{m.staffName}</td>
               <td className="whitespace-nowrap">{formatTime(m.timeOut)}</td>
-              <td className="min-w-48">{purposeAndPlace(m)}</td>
+              <td className="min-w-40">{purposeAndPlace(m)}</td>
               <td className="whitespace-nowrap">{m.permissionByName}</td>
               <td className="whitespace-nowrap">{m.timeIn ? formatTime(m.timeIn) : ''}</td>
               <td className="text-right tabular-nums">{m.minutesAway ?? ''}</td>
               <td className={`text-center font-semibold ${m.withinLimit === 'N' ? 'text-rose-700' : ''}`}>{m.withinLimit ?? ''}</td>
-              <td className="min-w-40">{m.remarks}</td>
+              <td className="min-w-36">{m.remarks}</td>
             </tr>
           ))}
         </tbody>

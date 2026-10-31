@@ -29,15 +29,20 @@ function QueueItem({ movement, selected, onToggle, onOpen }) {
             <span className="font-semibold">{movement.staffName}</span>
             <span className="text-sm text-slate-500">{formatDate(movement.timeOut)}</span>
             {movement.closedAtEndOfDay && <Badge tone="amber">Open at close</Badge>}
-            {!movement.timeIn && !movement.closedAtEndOfDay && <Badge tone="amber">No Time In</Badge>}
             {movement.withinLimit === 'N' && <Badge tone="red">Over limit</Badge>}
           </div>
           <p className="text-sm text-slate-700">{purposeAndPlace(movement)}</p>
-          <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-            <span>{formatTime(movement.timeOut)} – {movement.timeIn ? formatTime(movement.timeIn) : '—'}</span>
-            <span className="tabular-nums">{minutesLabel(movement.minutesAway)}</span>
-            <LimitBadge withinLimit={movement.withinLimit} />
-          </p>
+          {movement.timeIn ? (
+            <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+              <span>{formatTime(movement.timeOut)} – {formatTime(movement.timeIn)}</span>
+              <span className="tabular-nums">{minutesLabel(movement.minutesAway)}</span>
+              <LimitBadge withinLimit={movement.withinLimit} />
+            </p>
+          ) : (
+            <p className="text-sm">
+              Out at {formatTime(movement.timeOut)} · <span className="text-amber-800">no Time In — use “Details / correct” to set it, or flag</span>
+            </p>
+          )}
           {movement.remarks && <p className="text-sm text-slate-600">Remarks: {movement.remarks}</p>}
           <div className="flex flex-col gap-3 pt-1 sm:flex-row sm:items-start">
             <div className="flex-1"><ReviewControls movement={movement} /></div>
