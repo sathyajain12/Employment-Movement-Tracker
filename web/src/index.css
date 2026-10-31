@@ -43,6 +43,30 @@
   @apply rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6;
 }
 
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 10mm 8mm 14mm;
+
+    @bottom-right {
+      content: "Page " counter(page) " of " counter(pages);
+      font-size: 9pt;
+    }
+  }
+
+  body {
+    background: white;
+  }
+
+  /* Repeat the column headings on every printed page and keep rows whole. */
+  .print-table thead {
+    display: table-header-group;
+  }
+  .print-table tr {
+    break-inside: avoid;
+  }
+}
+
 @layer components {
   .table-base {
     @apply w-full border-collapse text-left text-sm;

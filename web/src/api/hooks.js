@@ -1,4 +1,5 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { exportRegisterToExcel } from '../lib/export.js'
 import { api } from './client.js'
 
 const ADMIN_REFRESH_MS = 30_000
@@ -139,6 +140,19 @@ export function useRegister(from, to) {
     queryKey: ['register', from, to],
     queryFn: () => api('/register', { query: { from, to } }),
     enabled: Boolean(from && to)
+  })
+}
+
+export function useExportRegister() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ from, to }) => {
+      const register = await qc.fetchQuery({
+        queryKey: ['register', from, to],
+        queryFn: () => api('/register', { query: { from, to } })
+      })
+      await exportRegisterToExcel(register)
+    }
   })
 }
 

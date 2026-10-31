@@ -3,6 +3,7 @@ import { AdminOnly, AuthGate, HomeRedirect, NotFound, RouteError } from './App.j
 import { Layout } from './components/Layout.jsx'
 import Dashboard from './pages/admin/Dashboard.jsx'
 import Monthly from './pages/admin/Monthly.jsx'
+import PrintRegister from './pages/admin/PrintRegister.jsx'
 import Register from './pages/admin/Register.jsx'
 import Review from './pages/admin/Review.jsx'
 import Settings from './pages/admin/Settings.jsx'
@@ -17,6 +18,8 @@ export const router = createBrowserRouter([
     element: <AuthGate />,
     errorElement: <RouteError />,
     children: [
+      // Print view sits outside the app layout so only the register is printed.
+      { path: '/admin/register/print', element: <AdminOnly><PrintRegister /></AdminOnly> },
       {
         element: <Layout />,
         children: [

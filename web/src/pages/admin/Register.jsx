@@ -1,11 +1,11 @@
 import { useState } from 'react'
 import { useSearchParams } from 'react-router'
-import { useMovements, useStaffList } from '../../api/hooks.js'
+import { useExportRegister, useMovements, useStaffList } from '../../api/hooks.js'
 import { EmptyState, ErrorMessage, Loading, PageHeader } from '../../components/Feedback.jsx'
 import { MovementDrawer } from '../../components/MovementDrawer.jsx'
 import { Pagination } from '../../components/Pagination.jsx'
 import { purposeAndPlace, REVIEW_LABELS } from '../../lib/format.js'
-import { currentMonthIst, formatDate, formatTime, monthBounds } from '../../lib/time.js'
+import { currentMonthIst, formatDate, formatDay, formatTime, monthBounds } from '../../lib/time.js'
 
 // The paper register's columns, in its exact order.
 const REGISTER_HEADINGS = [
@@ -117,6 +117,7 @@ function RegisterTable({ items, onOpen }) {
 export default function Register() {
   const [filters, setFilters] = useRegisterFilters()
   const [openId, setOpenId] = useState(null)
+  const exporter = useExportRegister()
   const { data, isPending, error, isFetching } = useMovements({
     from: filters.from,
     to: filters.to,
@@ -130,8 +131,17 @@ export default function Register() {
   return (
     <div>
       <PageHeader title="Register">
-        {isFetching && !isPending && <span className="text-sm text-slate-500" role="status">Updating…</span>}
+        {isFetching && !isPending && <span className="self-center text-sm text-slate-500" role="status">Updating…</span>}
+        <button type="button" className="btn-secondary" disabled={exporter.isPending}
+          onClick={() => exporter.mutate({ from: filters.from, to: filters.to })}>
+          {exporter.isPending ? 'Exporting…' : 'Export to Excel'}
+        </button>
+        <a className="btn-secondary" href={`/admin/register/print?from=${filters.from}&to=${filters.to}`} target="_blank" rel="noopener">
+          Print
+        </a>
       </PageHeader>
+      <ErrorMessage error={exporter.error} className="mb-3" />
+      <p className="mb-3 text-sm text-slate-600">Export and print include every entry from {formatDay(filters.from)} to {formatDay(filters.to)}.</p>
       <Filters filters={filters} onChange={setFilters} />
 
       {isPending ? (
