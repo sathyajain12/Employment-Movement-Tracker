@@ -14,6 +14,7 @@ export function isUniqueViolation(err) {
 }
 
 export const badRequest = (code, message) => new AppError(400, code, message)
+export const unauthorized = () => new AppError(401, 'UNAUTHENTICATED', 'Please sign in.')
 export const forbidden = (message = 'You do not have access to this.') => new AppError(403, 'FORBIDDEN', message)
 export const notFound = (message = 'Not found.') => new AppError(404, 'NOT_FOUND', message)
 export const conflict = (code, message) => new AppError(409, code, message)
