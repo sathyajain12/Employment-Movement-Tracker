@@ -1,0 +1,20 @@
+# Copy to .dev.vars (git-ignored) and fill in. Used only by `wrangler dev`.
+
+# Random secret for signing session cookies. Generate one with:
+#   node.exe -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
+JWT_SECRET=change-me
+
+# OAuth 2.0 Client ID (type "Web application") from Google Cloud Console.
+GOOGLE_CLIENT_ID=1234567890-abc.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=GOCSPX-change-me
+
+# Where the web app runs. The OAuth redirect URI is built from this:
+#   http://localhost:5173/api/auth/google/callback
+APP_URL=http://localhost:5173
+
+# Optional: only allow Google Workspace accounts from this domain, e.g. sssihl.edu.in
+ALLOWED_DOMAIN=
+
+# Comma-separated admin emails. The only source of admin access.
+# The first one is the default "Permission granted by" choice.
+ADMIN_EMAILS=boss@example.com
