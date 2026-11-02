@@ -8,6 +8,13 @@ export class SignInError extends Error {
   }
 }
 
+// Active admins in ADMIN_EMAILS order, so the first configured admin is the default approver.
+export async function activeAdminsInOrder(staffRepo, admins) {
+  const rows = (await staffRepo.listActive()).filter((row) => admins.isAdmin(row.email))
+  const rank = (row) => admins.emails.indexOf(row.email.toLowerCase())
+  return rows.sort((a, b) => rank(a) - rank(b))
+}
+
 export function createStaffService({ staffRepo, admins }) {
   const toDto = (row) => ({
     id: row.id,
@@ -29,15 +36,19 @@ export function createStaffService({ staffRepo, admins }) {
   }
 
   return {
+    // Everyone in the staff table, plus configured admins who haven't signed in yet (their
+    // row is only created on first sign-in), so the Staff page shows every admin.
     async list() {
-      return (await staffRepo.list()).map(toDto)
+      const rows = (await staffRepo.list()).map(toDto)
+      const known = new Set(rows.map((row) => row.email))
+      const notYet = admins.emails
+        .filter((email) => !known.has(email))
+        .map((email) => ({ id: null, name: email, email, active: true, isAdmin: true, hasSignedIn: false, createdAt: null }))
+      return [...rows, ...notYet]
     },
 
-    // Active admins in ADMIN_EMAILS order, so the first configured admin is the default approver.
     async listAdmins() {
-      const rows = (await staffRepo.listActive()).filter((row) => admins.isAdmin(row.email))
-      const rank = (row) => admins.emails.indexOf(row.email.toLowerCase())
-      return rows.sort((a, b) => rank(a) - rank(b)).map((row) => ({ id: row.id, name: row.name }))
+      return (await activeAdminsInOrder(staffRepo, admins)).map((row) => ({ id: row.id, name: row.name }))
     },
 
     async create({ name, email }) {
@@ -66,7 +77,8 @@ export function createStaffService({ staffRepo, admins }) {
     },
 
     // Decides who may sign in. Admins come from config and are created on first sign-in;
-    // everyone else must have been added by an admin.
+    // everyone else must have been added by an admin. `sub` is null for the local dev login,
+    // which never binds or checks a Google account.
     async signIn({ email, sub, name }) {
       const normalized = email.trim().toLowerCase()
       const isAdmin = admins.isAdmin(normalized)
@@ -77,11 +89,11 @@ export function createStaffService({ staffRepo, admins }) {
         return staffRepo.create({ name: name || normalized, email: normalized, role: 'admin', googleSub: sub })
       }
 
-      if (existing.google_sub && existing.google_sub !== sub) throw new SignInError('account_mismatch')
+      if (sub && existing.google_sub && existing.google_sub !== sub) throw new SignInError('account_mismatch')
       if (!existing.active && !isAdmin) throw new SignInError('inactive')
 
       const fields = {}
-      if (!existing.google_sub) fields.google_sub = sub
+      if (sub && !existing.google_sub) fields.google_sub = sub
       if (isAdmin && existing.role !== 'admin') fields.role = 'admin'
       if (!isAdmin && existing.role === 'admin') fields.role = 'staff'
       if (isAdmin && !existing.active) fields.active = 1

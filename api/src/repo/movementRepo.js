@@ -8,6 +8,8 @@ const columns = (limitParam) => `
   m.id, m.staff_id, s.name AS staff_name, s.email AS staff_email,
   m.time_out, m.purpose, m.place, m.permission_by, p.name AS permission_by_name,
   m.time_in, m.review, m.reviewed_at, m.remarks, m.created_at, m.updated_at,
+  m.voided_at, m.void_reason, m.category, m.category_other, m.expected_return_at,
+  (SELECT r.created_at FROM permission_requests r WHERE r.movement_id = m.id) AS requested_at,
   CASE WHEN m.time_in IS NULL THEN NULL ELSE ${MINUTES} END AS minutes_away,
   CASE WHEN m.time_in IS NULL THEN NULL
        WHEN ${MINUTES} <= ${limitParam} THEN 'Y'
@@ -17,13 +19,17 @@ const FROM = `FROM movements m
   JOIN staff s ON s.id = m.staff_id
   JOIN staff p ON p.id = m.permission_by`
 
-const UPDATABLE = ['time_out', 'time_in', 'purpose', 'place', 'permission_by', 'remarks', 'review', 'reviewed_at', 'updated_at']
+const UPDATABLE = [
+  'time_out', 'time_in', 'purpose', 'place', 'permission_by', 'remarks', 'review', 'reviewed_at', 'updated_at',
+  'voided_at', 'voided_by', 'void_reason'
+]
 
 const where = (conditions) => (conditions.length ? `WHERE ${conditions.join(' AND ')}` : '')
 
-// Open, started today (IST) and not yet closed by the end-of-day job.
+// Open, started today (IST), not voided and not yet closed by the end-of-day job.
 function currentlyOutSql(params, prefix, { todayStart, closedRemark }) {
   return `(${prefix}time_in IS NULL
+    AND ${prefix}voided_at IS NULL
     AND ${prefix}time_out >= ${params.add(todayStart)}
     AND instr(COALESCE(${prefix}remarks, ''), ${params.add(closedRemark)}) = 0)`
 }
@@ -49,18 +55,56 @@ export function createMovementRepo(db, auditRepo) {
 
     findOpenByStaff(staffId, limitMin) {
       const p = paramList()
-      const sql = `SELECT ${columns(p.add(limitMin))} ${FROM} WHERE m.staff_id = ${p.add(staffId)} AND m.time_in IS NULL`
+      const sql = `SELECT ${columns(p.add(limitMin))} ${FROM}
+                   WHERE m.staff_id = ${p.add(staffId)} AND m.time_in IS NULL AND m.voided_at IS NULL`
       return db.prepare(sql).bind(...p.values).first()
     },
 
-    async create({ staffId, timeOut, purpose, place, permissionBy }, limitMin) {
+    async create({ staffId, timeOut, purpose, place, permissionBy, category = null, categoryOther = null, expectedReturnAt = null }, limitMin) {
       const row = await runUnique(() =>
-        db.prepare(`INSERT INTO movements (staff_id, time_out, purpose, place, permission_by)
-                    VALUES (?1, ?2, ?3, ?4, ?5) RETURNING id`)
-          .bind(staffId, timeOut, purpose, place, permissionBy)
+        db.prepare(`INSERT INTO movements (staff_id, time_out, purpose, place, permission_by, category, category_other, expected_return_at)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) RETURNING id`)
+          .bind(staffId, timeOut, purpose, place, permissionBy, category, categoryOther, expectedReturnAt)
           .first()
       )
       return repo.findById(row.id, limitMin)
+    },
+
+    // The person's most recent completed outing, for the "You're back" screen.
+    findLastReturned(staffId, limitMin) {
+      const p = paramList()
+      const sql = `SELECT ${columns(p.add(limitMin))} ${FROM}
+                   WHERE m.staff_id = ${p.add(staffId)} AND m.time_in IS NOT NULL AND m.voided_at IS NULL
+                   ORDER BY m.time_in DESC LIMIT 1`
+      return db.prepare(sql).bind(...p.values).first()
+    },
+
+    // Everything the person started since `since`, cancelled entries included.
+    listByStaffSince(staffId, since, limitMin) {
+      const p = paramList()
+      const sql = `SELECT ${columns(p.add(limitMin))} ${FROM}
+                   WHERE m.staff_id = ${p.add(staffId)} AND m.time_out >= ${p.add(since)}
+                   ORDER BY m.time_out DESC`
+      return all(sql, p.values)
+    },
+
+    staffTotals(staffId, { start, end }) {
+      return db.prepare(`SELECT COUNT(*) AS outings,
+            COALESCE(SUM(CASE WHEN m.time_in IS NOT NULL THEN ${MINUTES} END), 0) AS total_minutes
+          FROM movements m
+          WHERE m.staff_id = ?1 AND m.time_out >= ?2 AND m.time_out < ?3 AND m.voided_at IS NULL`)
+        .bind(staffId, start, end)
+        .first()
+    },
+
+    // Last few distinct places the person visited, newest first, for autocomplete.
+    async recentPlaces(staffId, limit) {
+      const { results } = await db.prepare(`SELECT place FROM movements
+          WHERE staff_id = ?1 AND place IS NOT NULL AND voided_at IS NULL
+          GROUP BY lower(place) ORDER BY MAX(time_out) DESC LIMIT ?2`)
+        .bind(staffId, limit)
+        .all()
+      return results.map((row) => row.place)
     },
 
     // Only touches the row while it is still open, so two "I'm back" taps can't both win.
@@ -111,7 +155,7 @@ export function createMovementRepo(db, auditRepo) {
 
     listOpen(limitMin) {
       const p = paramList()
-      const sql = `SELECT ${columns(p.add(limitMin))} ${FROM} WHERE m.time_in IS NULL ORDER BY m.time_out`
+      const sql = `SELECT ${columns(p.add(limitMin))} ${FROM} WHERE m.time_in IS NULL AND m.voided_at IS NULL ORDER BY m.time_out`
       return all(sql, p.values)
     },
 
@@ -125,11 +169,12 @@ export function createMovementRepo(db, auditRepo) {
     },
 
     // Register-style search. Sl. No. is numbered over the date range before the other filters apply.
+    // Voided entries are left out of the numbering; `voided` lists only them instead.
     async search(filters, { limitMin, limit, offset, todayStart, closedRemark }) {
       const p = paramList()
       const cols = columns(p.add(limitMin))
 
-      const range = []
+      const range = [filters.voided ? 'm.voided_at IS NOT NULL' : 'm.voided_at IS NULL']
       if (filters.start) range.push(`m.time_out >= ${p.add(filters.start)}`)
       if (filters.end) range.push(`m.time_out < ${p.add(filters.end)}`)
 
@@ -159,7 +204,7 @@ export function createMovementRepo(db, auditRepo) {
       const p = paramList()
       const cols = columns(p.add(limitMin))
       const sql = `SELECT ROW_NUMBER() OVER (ORDER BY m.time_out, m.id) AS sl_no, ${cols} ${FROM}
-                   WHERE m.time_out >= ${p.add(start)} AND m.time_out < ${p.add(end)}
+                   WHERE m.time_out >= ${p.add(start)} AND m.time_out < ${p.add(end)} AND m.voided_at IS NULL
                    ORDER BY m.time_out, m.id`
       return all(sql, p.values)
     },
@@ -173,7 +218,7 @@ export function createMovementRepo(db, auditRepo) {
           COALESCE(SUM(CASE WHEN m.review = 'flagged' THEN 1 ELSE 0 END), 0) AS flagged,
           COALESCE(SUM(CASE WHEN m.id IS NOT NULL AND m.time_in IS NULL THEN 1 ELSE 0 END), 0) AS no_time_in
         FROM staff s
-        LEFT JOIN movements m ON m.staff_id = s.id AND m.time_out >= ?2 AND m.time_out < ?3
+        LEFT JOIN movements m ON m.staff_id = s.id AND m.time_out >= ?2 AND m.time_out < ?3 AND m.voided_at IS NULL
         GROUP BY s.id
         HAVING s.active = 1 OR COUNT(m.id) > 0
         ORDER BY s.name COLLATE NOCASE`, [limitMin, start, end])
@@ -183,11 +228,34 @@ export function createMovementRepo(db, auditRepo) {
       const p = paramList()
       const outNow = currentlyOutSql(p, '', { todayStart, closedRemark })
       const sql = `SELECT
-        (SELECT COUNT(*) FROM movements WHERE review = 'pending' AND NOT ${outNow}) AS pending_review,
+        (SELECT COUNT(*) FROM movements WHERE review = 'pending' AND voided_at IS NULL AND NOT ${outNow}) AS pending_review,
         (SELECT COUNT(*) FROM movements WHERE ${outNow}) AS out_now,
         (SELECT COUNT(*) FROM movements WHERE ${outNow}
-           AND (unixepoch(${p.add(now)}) - unixepoch(time_out)) / 60 > ${p.add(overdueAfterMin)}) AS overdue_now`
+           AND (unixepoch(${p.add(now)}) - unixepoch(time_out)) / 60 > ${p.add(overdueAfterMin)}) AS overdue_now,
+        (SELECT COUNT(*) FROM permission_requests WHERE status = 'pending') AS pending_requests,
+        (SELECT COUNT(*) FROM movements WHERE voided_at >= ${p.add(todayStart)} AND voided_by = staff_id) AS cancelled_today`
       return db.prepare(sql).bind(...p.values).first()
+    },
+
+    // Entries the owners cancelled themselves today (admin voids are not included).
+    listCancelledToday({ todayStart, limitMin }) {
+      const p = paramList()
+      const sql = `SELECT ${columns(p.add(limitMin))} ${FROM}
+                   WHERE m.voided_at >= ${p.add(todayStart)} AND m.voided_by = m.staff_id
+                   ORDER BY m.voided_at DESC`
+      return all(sql, p.values)
+    },
+
+    // Today's totals for the admin dashboard (IST day starting at todayStart).
+    today({ todayStart, limitMin }) {
+      return db.prepare(`SELECT
+          COUNT(*) AS outings,
+          COALESCE(SUM(CASE WHEN m.time_in IS NOT NULL THEN 1 ELSE 0 END), 0) AS returned,
+          COALESCE(SUM(CASE WHEN m.time_in IS NOT NULL AND ${MINUTES} > ?2 THEN 1 ELSE 0 END), 0) AS over_limit
+        FROM movements m
+        WHERE m.time_out >= ?1 AND m.voided_at IS NULL`)
+        .bind(todayStart, limitMin)
+        .first()
     }
   }
 

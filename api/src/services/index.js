@@ -1,10 +1,12 @@
 import { adminEmails, isAdminEmail } from '../lib/admins.js'
 import { createAuditRepo } from '../repo/auditRepo.js'
 import { createMovementRepo } from '../repo/movementRepo.js'
+import { createRequestRepo } from '../repo/requestRepo.js'
 import { createSettingsRepo } from '../repo/settingsRepo.js'
 import { createStaffRepo } from '../repo/staffRepo.js'
 import { createMovementService } from './movementService.js'
 import { createReportService } from './reportService.js'
+import { createRequestService } from './requestService.js'
 import { createSettingsService } from './settingsService.js'
 import { createStaffService } from './staffService.js'
 
@@ -19,12 +21,14 @@ export function buildServices(env) {
   const movementRepo = createMovementRepo(env.DB, auditRepo)
   const staffRepo = createStaffRepo(env.DB)
   const settingsRepo = createSettingsRepo(env.DB)
+  const requestRepo = createRequestRepo(env.DB)
 
   const settings = createSettingsService({ settingsRepo })
   return {
     settings,
     staff: createStaffService({ staffRepo, admins }),
     movements: createMovementService({ movementRepo, staffRepo, auditRepo, settingsService: settings, admins }),
+    requests: createRequestService({ requestRepo, movementRepo, staffRepo, settingsService: settings, admins }),
     reports: createReportService({ movementRepo, settingsService: settings })
   }
 }

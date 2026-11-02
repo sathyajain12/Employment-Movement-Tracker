@@ -4,7 +4,8 @@
 
 const logChannel = {
   async send(event) {
-    console.log(`[notify] ${event.type}: ${event.movementIds.length} movement(s)`, event.movementIds)
+    const ids = event.movementIds ?? event.requestIds ?? []
+    console.log(`[notify] ${event.type}: ${ids.length} item(s)`, ids)
   }
 }
 

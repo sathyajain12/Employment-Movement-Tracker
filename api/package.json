@@ -5,7 +5,7 @@
     "dev": "wrangler dev",
     "test": "vitest run",
     "test:watch": "vitest",
-    "deploy": "wrangler deploy --minify"
+    "deploy": "npm --prefix ../web run build && wrangler deploy --minify"
   },
   "dependencies": {
     "@hono/zod-validator": "^0.9.1",

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { REMARK_EXCEEDED, REMARK_NOT_RECORDED } from '../src/services/movementService.js'
+import {
+  CANCEL_WINDOW_MIN, REASON_ADMIN_RETURN, REASON_SELF_CANCEL, REMARK_EXCEEDED, REMARK_NOT_RECORDED
+} from '../src/services/movementService.js'
 import { asha, boss, ravi, setup } from './fakes.js'
 
 const stepOut = (service, user = asha, extra = {}) =>
@@ -259,5 +261,63 @@ describe('scheduled jobs', () => {
     await service.closeEndOfDay()
     clock.advanceMinutes(5)
     await expect(service.recordReturn(asha, m.id)).rejects.toMatchObject({ code: 'CLOSED_AT_END_OF_DAY' })
+  })
+})
+
+describe('cancelling and voiding', () => {
+  it('lets the owner cancel within the window, telling the admins, and frees them to step out again', async () => {
+    const { service, clock, notifications } = setup()
+    const m = await stepOut(service)
+    clock.advanceMinutes(4)
+    const voided = await service.void(asha, m.id, {})
+    expect(voided).toMatchObject({ voided: true, voidReason: REASON_SELF_CANCEL })
+    expect(notifications).toEqual([{ type: 'movement_cancelled', movementIds: [m.id] }])
+    expect(await service.openFor(asha)).toBeNull()
+    await expect(stepOut(service)).resolves.toMatchObject({ staffId: asha.id })
+  })
+
+  it('refuses the owner once the window has passed', async () => {
+    const { service, clock } = setup()
+    const m = await stepOut(service)
+    clock.advanceMinutes(CANCEL_WINDOW_MIN)
+    await expect(service.void(asha, m.id, {})).rejects.toMatchObject({ status: 409, code: 'CANCEL_WINDOW_PASSED' })
+  })
+
+  it('hides other people\'s entries from staff', async () => {
+    const { service } = setup()
+    const m = await stepOut(service)
+    await expect(service.void(ravi, m.id, {})).rejects.toMatchObject({ status: 404 })
+  })
+
+  it('lets an admin void any entry with a reason, and audits it', async () => {
+    const { service, movementRepo, clock, notifications } = setup()
+    const m = await stepOut(service)
+    clock.advanceMinutes(30)
+    await expect(service.void(boss, m.id, {})).rejects.toMatchObject({ code: 'REASON_REQUIRED' })
+    await service.void(boss, m.id, { reason: 'Duplicate entry' })
+    expect(movementRepo.audit).toEqual([expect.objectContaining({ field: 'voided', reason: 'Duplicate entry', changedBy: boss.id })])
+    expect(notifications).toEqual([])
+    await expect(service.void(boss, m.id, { reason: 'again' })).rejects.toMatchObject({ code: 'VOIDED' })
+    await expect(service.review(boss, m.id, { review: 'flagged' })).rejects.toMatchObject({ code: 'VOIDED' })
+  })
+})
+
+describe('admin marks someone returned', () => {
+  it('sets Time In now and audits who did it', async () => {
+    const { service, movementRepo, clock } = setup({ now: '2026-10-31T05:00:00Z' })
+    const m = await stepOut(service)
+    clock.advanceMinutes(40)
+    const back = await service.adminReturn(boss, m.id)
+    expect(back).toMatchObject({ timeIn: '2026-10-31T05:40:00Z', minutesAway: 40, review: 'pending' })
+    expect(movementRepo.audit).toEqual([expect.objectContaining({ field: 'time_in', reason: REASON_ADMIN_RETURN, changedBy: boss.id })])
+    await expect(service.adminReturn(boss, m.id)).rejects.toMatchObject({ code: 'ALREADY_RETURNED' })
+  })
+
+  it('refuses after the end-of-day close, so nobody guesses the time', async () => {
+    const { service, clock } = setup({ now: '2026-10-31T10:00:00Z' })
+    const m = await stepOut(service)
+    clock.set('2026-10-31T12:00:00Z')
+    await service.closeEndOfDay()
+    await expect(service.adminReturn(boss, m.id)).rejects.toMatchObject({ code: 'CLOSED_AT_END_OF_DAY' })
   })
 })

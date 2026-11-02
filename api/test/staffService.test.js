@@ -98,3 +98,14 @@ describe('staff management', () => {
     expect(await staffService.currentUser(2)).toBeNull()
   })
 })
+
+describe('staff list', () => {
+  it('shows configured admins who have not signed in yet', async () => {
+    const { staffService } = setup()
+    const list = await staffService.list()
+    // boss@example.com is in the table; deputy@example.com is only in ADMIN_EMAILS.
+    expect(list.find((p) => p.email === 'boss@example.com')).toMatchObject({ isAdmin: true })
+    expect(list.find((p) => p.email === 'deputy@example.com')).toMatchObject({ id: null, isAdmin: true, hasSignedIn: false })
+    expect(list.filter((p) => p.email === 'boss@example.com')).toHaveLength(1)
+  })
+})

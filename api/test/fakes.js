@@ -62,16 +62,17 @@ export function fakeMovementRepo(staffRepo) {
       return row ? derive(row, limitMin) : null
     },
     findOpenByStaff: async (staffId, limitMin) => {
-      const row = rows.find((r) => r.staff_id === staffId && !r.time_in)
+      const row = rows.find((r) => r.staff_id === staffId && !r.time_in && !r.voided_at)
       return row ? derive(row, limitMin) : null
     },
     async create({ staffId, timeOut, purpose, place, permissionBy }, limitMin) {
-      if (rows.some((r) => r.staff_id === staffId && !r.time_in)) {
+      if (rows.some((r) => r.staff_id === staffId && !r.time_in && !r.voided_at)) {
         throw new UniqueViolation('UNIQUE constraint failed: movements.staff_id')
       }
       const row = {
         id: nextId++, staff_id: staffId, time_out: timeOut, purpose, place, permission_by: permissionBy,
-        time_in: null, review: 'pending', reviewed_at: null, remarks: null, updated_at: null
+        time_in: null, review: 'pending', reviewed_at: null, remarks: null, updated_at: null,
+        voided_at: null, voided_by: null, void_reason: null
       }
       rows.push(row)
       return derive(row, limitMin)
@@ -98,7 +99,7 @@ export function fakeMovementRepo(staffRepo) {
       const mine = rows.filter((r) => r.staff_id === staffId).map((r) => derive(r, limitMin))
       return { rows: mine.reverse(), total: mine.length }
     },
-    listOpen: async (limitMin) => rows.filter((r) => !r.time_in).map((r) => derive(r, limitMin))
+    listOpen: async (limitMin) => rows.filter((r) => !r.time_in && !r.voided_at).map((r) => derive(r, limitMin))
   }
 }
 

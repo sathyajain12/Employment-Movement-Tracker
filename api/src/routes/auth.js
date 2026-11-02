@@ -8,6 +8,9 @@ const auth = new Hono()
 
 const SESSION_SECONDS = 12 * 60 * 60
 const STATE_COOKIE = 'oauth_state'
+// Which sign-in page the person started from, so a failed sign-in goes back to it.
+const PORTAL_COOKIE = 'login_portal'
+const loginPage = (portal) => (portal === 'admin' ? '/admin/login' : '/login')
 const GOOGLE_ISSUERS = ['https://accounts.google.com', 'accounts.google.com']
 
 const isHttps = (c) => c.env.APP_URL.startsWith('https://')
@@ -57,15 +60,16 @@ function readIdToken(c, idToken) {
 }
 
 auth.get('/google', (c) => {
+  const portal = c.req.query('portal') === 'admin' ? 'admin' : 'staff'
   if (!isConfigured(c)) {
     console.error('Google sign-in is not configured: set APP_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, JWT_SECRET')
-    return c.redirect(`${c.env.APP_URL || ''}/login?error=not_configured`)
+    return c.redirect(`${c.env.APP_URL || ''}${loginPage(portal)}?error=not_configured`)
   }
 
   const state = randomState()
-  setCookie(c, STATE_COOKIE, state, {
-    httpOnly: true, secure: isHttps(c), sameSite: 'Lax', path: '/api/auth', maxAge: 600
-  })
+  const cookie = { httpOnly: true, secure: isHttps(c), sameSite: 'Lax', path: '/api/auth', maxAge: 600 }
+  setCookie(c, STATE_COOKIE, state, cookie)
+  setCookie(c, PORTAL_COOKIE, portal, cookie)
 
   const params = new URLSearchParams({
     client_id: c.env.GOOGLE_CLIENT_ID,
@@ -83,9 +87,11 @@ auth.get('/google', (c) => {
 auth.get('/google/callback', async (c) => {
   const { code, state, error } = c.req.query()
   const savedState = getCookie(c, STATE_COOKIE)
+  const portal = getCookie(c, PORTAL_COOKIE)
   deleteCookie(c, STATE_COOKIE, { path: '/api/auth', secure: isHttps(c) })
+  deleteCookie(c, PORTAL_COOKIE, { path: '/api/auth', secure: isHttps(c) })
 
-  const fail = (reason) => c.redirect(`${c.env.APP_URL}/login?error=${reason}`)
+  const fail = (reason) => c.redirect(`${c.env.APP_URL}${loginPage(portal)}?error=${reason}`)
 
   if (error) return fail('cancelled')
   if (!code || !state || !savedState || state !== savedState) return fail('invalid_state')
@@ -101,11 +107,25 @@ auth.get('/google/callback', async (c) => {
   const { claims, error: tokenError } = readIdToken(c, idToken)
   if (tokenError) return fail(tokenError)
 
+  return startSession(c, { email: claims.email, sub: claims.sub, name: claims.name }, portal)
+})
+
+// Local development only: sign in by email without Google. Enabled by DEV_LOGIN=true in
+// .dev.vars; never set it in production.
+auth.get('/dev-login', (c) => {
+  if (c.env.DEV_LOGIN !== 'true') return c.notFound()
+  const email = c.req.query('email')?.trim()
+  const portal = c.req.query('portal')
+  if (!email) return c.redirect(`${c.env.APP_URL}${loginPage(portal)}`)
+  return startSession(c, { email, sub: null }, portal)
+})
+
+async function startSession(c, identity, portal) {
   let staff
   try {
-    staff = await c.get('services').staff.signIn({ email: claims.email, sub: claims.sub, name: claims.name })
+    staff = await c.get('services').staff.signIn(identity)
   } catch (err) {
-    if (err instanceof SignInError) return fail(err.code)
+    if (err instanceof SignInError) return c.redirect(`${c.env.APP_URL}${loginPage(portal)}?error=${err.code}`)
     throw err
   }
 
@@ -118,7 +138,7 @@ auth.get('/google/callback', async (c) => {
     httpOnly: true, secure: isHttps(c), sameSite: 'Lax', path: '/', maxAge: SESSION_SECONDS
   })
   return c.redirect(`${c.env.APP_URL}/`)
-})
+}
 
 auth.post('/logout', (c) => {
   deleteCookie(c, SESSION_COOKIE, { path: '/', secure: isHttps(c) })

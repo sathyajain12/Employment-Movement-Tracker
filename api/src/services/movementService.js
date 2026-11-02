@@ -1,12 +1,50 @@
 import { conflict, notFound, unprocessable, UniqueViolation } from '../lib/errors.js'
-import { istDate, istDayStartUtc, istDateTimeUtc, istRangeToUtc, minutesBetween, nowIso } from '../lib/time.js'
+import { istDate, istDayStartUtc, istDateTimeUtc, istRangeToUtc, minutesBetween, nowIso, toIso } from '../lib/time.js'
 import { notify as defaultNotify } from '../lib/notify.js'
 
 export const REMARK_EXCEEDED = 'Exceeded time limit'
 export const REMARK_NOT_RECORDED = 'Time In not recorded'
+export const REASON_ADMIN_RETURN = 'Marked returned by admin'
+export const REASON_SELF_CANCEL = 'Cancelled by the staff member'
+
+// How long after Time Out the owner may cancel a mistaken entry themselves.
+export const CANCEL_WINDOW_MIN = 5
 
 const MINE_PAGE_SIZE = 20
 const SEARCH_PAGE_SIZE = 50
+
+// After "I'm back", the confirmation stays on the home screen for this long.
+const SHOW_RETURN_MIN = 60
+const MAX_EXPECTED_MIN = 12 * 60
+const RECENT_PLACES = 5
+
+// Expected return as an instant: a duration counts from `from` (the Time Out); a clock time
+// must be later than `from` and on the same working stretch.
+export function resolveExpectedReturn({ expectedMinutes, expectedReturnAt }, from) {
+  if (expectedMinutes !== undefined) return toIso(Date.parse(from) + expectedMinutes * 60000)
+  if (expectedReturnAt === undefined) return null
+  if (expectedReturnAt <= from) {
+    throw unprocessable('INVALID_EXPECTED_RETURN', 'Expected return must be later than now.')
+  }
+  if (minutesBetween(from, expectedReturnAt) > MAX_EXPECTED_MIN) {
+    throw unprocessable('INVALID_EXPECTED_RETURN', 'Expected return must be within 12 hours.')
+  }
+  return expectedReturnAt
+}
+
+// The "Other" text is kept only with the Other category.
+export function categoryFields({ category, categoryOther }) {
+  return { category: category ?? null, categoryOther: category === 'Other' ? categoryOther ?? null : null }
+}
+
+// Permission can only come from someone currently listed in ADMIN_EMAILS and active.
+export async function assertApprover(staffRepo, admins, staffId) {
+  const approver = await staffRepo.findById(staffId)
+  if (!approver || !approver.active || !admins.isAdmin(approver.email)) {
+    throw unprocessable('INVALID_APPROVER', 'Permission must be granted by an active admin.')
+  }
+  return approver
+}
 
 const remarkParts = (remarks) => (remarks ? remarks.split('; ') : [])
 export const hasRemark = (remarks, text) => remarkParts(remarks).includes(text)
@@ -40,6 +78,14 @@ export function toMovementDto(row) {
     reviewedAt: row.reviewed_at,
     remarks: row.remarks,
     closedAtEndOfDay: hasRemark(row.remarks, REMARK_NOT_RECORDED),
+    voided: Boolean(row.voided_at),
+    voidedAt: row.voided_at ?? null,
+    voidReason: row.void_reason ?? null,
+    category: row.category ?? null,
+    categoryOther: row.category_other ?? null,
+    expectedReturnAt: row.expected_return_at ?? null,
+    // Set when the entry came from an approved request; an admin's own Time Out has none.
+    requestedAt: row.requested_at ?? null,
     updatedAt: row.updated_at
   }
 }
@@ -51,18 +97,13 @@ export function createMovementService({ movementRepo, staffRepo, auditRepo, sett
     return (await settingsService.get()).timeLimitMin
   }
 
-  async function assertApprover(staffId) {
-    const approver = await staffRepo.findById(staffId)
-    if (!approver || !approver.active || !admins.isAdmin(approver.email)) {
-      throw unprocessable('INVALID_APPROVER', 'Permission must be granted by an active admin.')
-    }
-    return approver
-  }
+  const assertActiveApprover = (staffId) => assertApprover(staffRepo, admins, staffId)
 
   // Staff only ever see their own rows; anyone else's id looks like it doesn't exist.
   async function findOwned(user, id, limit) {
     const row = await movementRepo.findById(id, limit)
     if (!row || row.staff_id !== user.id) throw notFound('Movement not found.')
+    if (row.voided_at) throw conflict('VOIDED', 'This entry has been cancelled.')
     return row
   }
 
@@ -70,6 +111,19 @@ export function createMovementService({ movementRepo, staffRepo, auditRepo, sett
     const row = await movementRepo.findById(id, limit)
     if (!row) throw notFound('Movement not found.')
     return row
+  }
+
+  async function findLiveOrThrow(id, limit) {
+    const row = await findOrThrow(id, limit)
+    if (row.voided_at) throw conflict('VOIDED', 'This entry has been voided.')
+    return row
+  }
+
+  const cancelUntil = (row) => toIso(Date.parse(row.time_out) + CANCEL_WINDOW_MIN * 60000)
+
+  // The owner can take back a mistaken Time Out for a few minutes, while still out.
+  function ownerCanCancel(row, at) {
+    return !row.time_in && !row.voided_at && at < cancelUntil(row)
   }
 
   // A forgotten Time In can't be filled in by the owner on a later day or after the
@@ -89,19 +143,41 @@ export function createMovementService({ movementRepo, staffRepo, auditRepo, sett
       const row = await movementRepo.findOpenByStaff(user.id, limit)
       if (!row) return null
       const at = now()
-      return { ...withLive(toMovementDto(row), at, limit), canReturn: ownerCanReturn(row, at) }
+      return {
+        ...withLive(toMovementDto(row), at, limit),
+        canReturn: ownerCanReturn(row, at),
+        canCancel: ownerCanCancel(row, at),
+        cancelUntil: cancelUntil(row)
+      }
     },
 
-    async timeOut(user, { purpose, place, permissionBy }) {
+    // The "You're back" confirmation: the latest outing if it ended within the last hour.
+    async recentReturnFor(user) {
+      const limit = await limitMin()
+      const row = await movementRepo.findLastReturned(user.id, limit)
+      if (!row || minutesBetween(row.time_in, now()) >= SHOW_RETURN_MIN) return null
+      return toMovementDto(row)
+    },
+
+    async recentPlaces(user) {
+      return movementRepo.recentPlaces(user.id, RECENT_PLACES)
+    },
+
+    async timeOut(user, { purpose, place, permissionBy, category, categoryOther, expectedMinutes, expectedReturnAt }) {
       const limit = await limitMin()
       if (await movementRepo.findOpenByStaff(user.id, limit)) {
         throw conflict('ALREADY_OUT', 'You are already out. Record your Time In before stepping out again.')
       }
-      await assertApprover(permissionBy)
+      await assertActiveApprover(permissionBy)
+      const at = now()
+      const expected = resolveExpectedReturn({ expectedMinutes, expectedReturnAt }, at)
 
       try {
         const row = await movementRepo.create(
-          { staffId: user.id, timeOut: now(), purpose, place: place ?? null, permissionBy },
+          {
+            staffId: user.id, timeOut: at, purpose, place: place ?? null, permissionBy,
+            ...categoryFields({ category, categoryOther }), expectedReturnAt: expected
+          },
           limit
         )
         return toMovementDto(row)
@@ -167,14 +243,22 @@ export function createMovementService({ movementRepo, staffRepo, auditRepo, sett
       }
     },
 
+    async today() {
+      const settings = await settingsService.get()
+      const row = await movementRepo.today({ todayStart: todayStart(now()), limitMin: settings.timeLimitMin })
+      return { outings: row.outings, returned: row.returned, overLimit: row.over_limit }
+    },
+
+    // review: 'voided' lists only voided entries; any other value filters live entries.
     async search({ from, to, staffId, review, withinLimit, queue, page }) {
       const limit = await limitMin()
       const range = {}
       if (from) range.start = istDayStartUtc(from)
       if (to) range.end = istRangeToUtc(to, to).end
+      const voided = review === 'voided'
 
       const { rows, total } = await movementRepo.search(
-        { ...range, staffId, review, withinLimit, queue },
+        { ...range, staffId, review: voided ? undefined : review, voided, withinLimit, queue },
         {
           limitMin: limit,
           limit: SEARCH_PAGE_SIZE,
@@ -188,7 +272,7 @@ export function createMovementService({ movementRepo, staffRepo, auditRepo, sett
 
     async review(admin, id, { review, remark }) {
       const limit = await limitMin()
-      const row = await findOrThrow(id, limit)
+      const row = await findLiveOrThrow(id, limit)
       if (review === 'confirmed' && !row.time_in) {
         throw unprocessable('NO_TIME_IN', 'Correct the Time In before confirming this entry.')
       }
@@ -203,7 +287,7 @@ export function createMovementService({ movementRepo, staffRepo, auditRepo, sett
     async bulkReview(admin, ids, review) {
       const limit = await limitMin()
       const unique = [...new Set(ids)]
-      const rows = await Promise.all(unique.map((id) => findOrThrow(id, limit)))
+      const rows = await Promise.all(unique.map((id) => findLiveOrThrow(id, limit)))
       if (review === 'confirmed' && rows.some((row) => !row.time_in)) {
         throw unprocessable('NO_TIME_IN', 'Some selected entries have no Time In. Correct them before confirming.')
       }
@@ -215,7 +299,7 @@ export function createMovementService({ movementRepo, staffRepo, auditRepo, sett
     // Writes one audit row per changed field, atomically with the change, and sends the entry back for review.
     async correct(admin, id, input) {
       const limit = await limitMin()
-      const row = await findOrThrow(id, limit)
+      const row = await findLiveOrThrow(id, limit)
       const at = now()
 
       const changes = {}
@@ -238,7 +322,7 @@ export function createMovementService({ movementRepo, staffRepo, auditRepo, sett
       const display = { ...changes }
       const previous = {}
       if (changes.permission_by !== undefined) {
-        const approver = await assertApprover(changes.permission_by)
+        const approver = await assertActiveApprover(changes.permission_by)
         display.permission_by = approver.name
         previous.permission_by = row.permission_by_name
       }
@@ -259,6 +343,62 @@ export function createMovementService({ movementRepo, staffRepo, auditRepo, sett
         auditRows
       )
       return toMovementDto(await movementRepo.findById(id, limit))
+    },
+
+    // For someone who forgot to tap "I'm back": Time In is now, and the audit trail says who set it.
+    async adminReturn(admin, id) {
+      const limit = await limitMin()
+      const row = await findLiveOrThrow(id, limit)
+      if (row.time_in) throw conflict('ALREADY_RETURNED', 'Time In is already recorded for this entry.')
+      const at = now()
+      if (!ownerCanReturn(row, at)) {
+        throw conflict('CLOSED_AT_END_OF_DAY',
+          'This entry is from an earlier day or was closed at end of day. Use a correction to set the actual Time In.')
+      }
+      if (at <= row.time_out) throw unprocessable('INVALID_TIME_ORDER', 'Time In must be after Time Out.')
+
+      await movementRepo.updateWithAudit(id, { time_in: at, updated_at: at }, [{
+        movementId: id, field: 'time_in', oldValue: null, newValue: at,
+        reason: REASON_ADMIN_RETURN, changedBy: admin.id, changedAt: at
+      }])
+      return toMovementDto(await movementRepo.findById(id, limit))
+    },
+
+    // Takes an entry out of the register without deleting it. The owner may do this for a few
+    // minutes after a mistaken Time Out; an admin may void any entry, with a reason.
+    async void(user, id, { reason }) {
+      const limit = await limitMin()
+      const row = await findOrThrow(id, limit)
+      if (row.voided_at) throw conflict('VOIDED', 'This entry is already voided.')
+      const at = now()
+
+      let why
+      const selfCancel = row.staff_id === user.id && ownerCanCancel(row, at)
+      if (selfCancel) {
+        why = reason || REASON_SELF_CANCEL
+      } else if (user.isAdmin) {
+        if (!reason) throw unprocessable('REASON_REQUIRED', 'Give a reason for voiding this entry.')
+        why = reason
+      } else if (row.staff_id === user.id) {
+        throw conflict('CANCEL_WINDOW_PASSED',
+          `An entry can only be cancelled within ${CANCEL_WINDOW_MIN} minutes. Ask the office admin.`)
+      } else {
+        throw notFound('Movement not found.')
+      }
+
+      await movementRepo.updateWithAudit(id, { voided_at: at, voided_by: user.id, void_reason: why, updated_at: at }, [{
+        movementId: id, field: 'voided', oldValue: null, newValue: 'Voided',
+        reason: why, changedBy: user.id, changedAt: at
+      }])
+      // Admins already know about their own voids; a staff cancellation needs telling.
+      if (selfCancel) await notify({ type: 'movement_cancelled', movementIds: [id] })
+      return toMovementDto(await movementRepo.findById(id, limit))
+    },
+
+    async cancelledToday() {
+      const limit = await limitMin()
+      const rows = await movementRepo.listCancelledToday({ todayStart: todayStart(now()), limitMin: limit })
+      return rows.map(toMovementDto)
     },
 
     async audit(id) {
@@ -284,7 +424,13 @@ export function createMovementService({ movementRepo, staffRepo, auditRepo, sett
         closedRemark: REMARK_NOT_RECORDED,
         overdueAfterMin: settings.timeLimitMin + settings.graceMin
       })
-      return { pendingReview: row.pending_review, outNow: row.out_now, overdueNow: row.overdue_now }
+      return {
+        pendingReview: row.pending_review,
+        outNow: row.out_now,
+        overdueNow: row.overdue_now,
+        pendingRequests: row.pending_requests,
+        cancelledToday: row.cancelled_today
+      }
     },
 
     // Cron: flag open movements past limit + grace. Idempotent.

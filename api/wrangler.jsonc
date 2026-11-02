@@ -1,9 +1,18 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "movement-register-api",
+  "name": "movement-register",
   "main": "src/index.js",
   // Keep at this value: the local runtime does not support a newer date.
   "compatibility_date": "2026-10-30",
+
+  // One Worker serves both the web app (built into web/dist) and the API, so they share an
+  // origin and the session cookie stays first-party. /api/* always runs the Worker; any other
+  // path is a static file, or index.html so client-side routes like /admin/register work.
+  "assets": {
+    "directory": "../web/dist",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
 
   "d1_databases": [
     {
@@ -25,9 +34,9 @@
   // Non-secret production values. Local dev overrides these from .dev.vars.
   // Secrets (JWT_SECRET, GOOGLE_CLIENT_SECRET, ADMIN_EMAILS) are set with `wrangler secret put`.
   "vars": {
-    "APP_URL": "https://movement-register.example.com",
-    "GOOGLE_CLIENT_ID": "",
-    "ALLOWED_DOMAIN": ""
+    "APP_URL": "https://movement-register.coeoffice.workers.dev",
+    "GOOGLE_CLIENT_ID": "378803562974-9h25vtdt4stjaitg66fnulbpn5g00291.apps.googleusercontent.com",
+    "ALLOWED_DOMAIN": "sssihl.edu.in"
   },
 
   "observability": {

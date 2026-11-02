@@ -1,18 +1,25 @@
 import { formatIstDate, formatIstTime, istMonthToUtc, istRangeToUtc } from '../lib/time.js'
 
+// The paper book says "1-Hour"; keep that wording unless the limit has been changed.
+export function limitHeading(limitMin) {
+  return limitMin === 60 ? 'Within 1-Hour Limit (Y/N)' : `Within ${limitMin}-Minute Limit (Y/N)`
+}
+
 // The paper register's columns, in its exact order.
-export const REGISTER_COLUMNS = [
-  'Sl. No.',
-  'Date',
-  'Name of Staff Member',
-  'Time Out',
-  'Purpose / Place of Visit',
-  'Permission Granted By',
-  'Time In',
-  'Total Time Away (in minutes)',
-  'Within 1-Hour Limit (Y/N)',
-  'Remarks'
-]
+export function registerColumns(limitMin) {
+  return [
+    'Sl. No.',
+    'Date',
+    'Name of Staff Member',
+    'Time Out',
+    'Purpose / Place of Visit',
+    'Permission Granted By',
+    'Time In',
+    'Total Time Away (in minutes)',
+    limitHeading(limitMin),
+    'Remarks'
+  ]
+}
 
 export function toRegisterRow(row) {
   return [
@@ -34,7 +41,7 @@ export function createReportService({ movementRepo, settingsService }) {
     async register(from, to) {
       const { timeLimitMin } = await settingsService.get()
       const rows = await movementRepo.register({ ...istRangeToUtc(from, to), limitMin: timeLimitMin })
-      return { from, to, columns: REGISTER_COLUMNS, rows: rows.map(toRegisterRow) }
+      return { from, to, columns: registerColumns(timeLimitMin), rows: rows.map(toRegisterRow) }
     },
 
     async monthly(month) {

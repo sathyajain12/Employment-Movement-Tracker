@@ -41,6 +41,21 @@ const email = z.string().trim().toLowerCase().pipe(z.email('Enter a valid email 
 const reviewDecision = z.enum(['confirmed', 'flagged'])
 const page = z.coerce.number().int().min(1).max(10000).default(1)
 
+export const CATEGORIES = ['Bank', 'Medical', 'Personal', 'Other']
+const category = z.enum(CATEGORIES, { error: 'Pick one of the listed categories.' }).nullable().optional()
+const expectedMinutes = z.number().int().min(5, 'At least 5 minutes.').max(720, 'At most 12 hours.').optional()
+
+// Either a duration ("30 min", counted from Time Out) or a clock time ("back by 3 PM").
+const expectedReturn = {
+  category,
+  categoryOther: clearableText('Other', 60),
+  expectedMinutes,
+  expectedReturnAt: timestamp.optional()
+}
+const hasExpectedReturn = (v) => v.expectedMinutes !== undefined || v.expectedReturnAt !== undefined
+const otherIsSpecified = (v) => v.category !== 'Other' || Boolean(v.categoryOther)
+const OTHER_REQUIRED = { message: 'Say what "Other" is.', path: ['categoryOther'] }
+
 const MAX_RANGE_DAYS = 366
 const rangeOk = ({ from, to }) => !from || !to || from <= to
 const rangeShortEnough = ({ from, to }) =>
@@ -54,7 +69,25 @@ export const schemas = {
   timeOut: z.object({
     purpose: requiredText('Purpose', 200),
     place: clearableText('Place', 120),
-    permissionBy: id
+    permissionBy: id,
+    ...expectedReturn
+  }).refine(otherIsSpecified, OTHER_REQUIRED),
+
+  permissionRequest: z.object({
+    purpose: requiredText('Purpose', 100),
+    place: clearableText('Place', 120),
+    requestedFrom: id.optional(),
+    ...expectedReturn
+  })
+    .refine(otherIsSpecified, OTHER_REQUIRED)
+    .refine(hasExpectedReturn, { message: 'Choose when you expect to be back.', path: ['expectedReturnAt'] }),
+
+  rejectRequest: z.object({
+    note: clearableText('Note', 300)
+  }),
+
+  voidMovement: z.object({
+    reason: clearableText('Reason', 300)
   }),
 
   details: z.object({
@@ -86,7 +119,7 @@ export const schemas = {
     from: day.optional(),
     to: day.optional(),
     staffId: id.optional(),
-    review: z.enum(['pending', 'confirmed', 'flagged']).optional(),
+    review: z.enum(['pending', 'confirmed', 'flagged', 'voided']).optional(),
     withinLimit: z.enum(['Y', 'N']).optional(),
     queue: z.enum(['true', 'false']).transform((v) => v === 'true').optional(),
     page
